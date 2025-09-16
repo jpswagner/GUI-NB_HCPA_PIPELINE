@@ -1,0 +1,25 @@
+# Python / Conda
+__pycache__/
+*.py[cod]
+.venv/
+.env/
+*.egg-info/
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Saídas e dados grandes
+fastp_output/
+results/
+logs/
+*.fastq.gz
+*.fq.gz
+*.bam
+*.sam
+*.vcf
+
+# Relatórios gerados
+fastp_output/*_fastp_report.html
+fastp_output/*_fastp_report.json

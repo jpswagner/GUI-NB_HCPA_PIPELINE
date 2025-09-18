@@ -5,8 +5,14 @@ import os, sys, shutil, subprocess, pathlib
 
 ENV_NAME = "NB_HCPA_Workflow"
 
+# Guardião do ambiente conda (_reexec_in_conda)
+#    - Se o script NÃO estiver rodando no env alvo, ele se relança com:
+#      "conda run -n NB_HCPA_Workflow python <este_arquivo.py>".
+#    - Variável NB_PIPELINE_BOOTSTRAPPED evita loop de realimentação.
+#    - Garante que fastp/multiqc/tkinter venham do ambiente correto.
+
 def _reexec_in_conda():
-    # tenta achar o conda
+    # Procura o executável do conda (variável CONDA_EXE, no PATH ou em ~/miniconda3/bin/conda).
     conda = os.environ.get("CONDA_EXE") or shutil.which("conda")
     if not conda:
         cand = pathlib.Path.home() / "miniconda3" / "bin" / "conda"
@@ -40,6 +46,8 @@ if os.environ.get("NB_PIPELINE_BOOTSTRAPPED") != "1":
             # estamos fora do env e com tkinter disponível; mesmo assim, padronize no env
             _reexec_in_conda()
 
+#você pode rodar python app.py de onde quiser; se não estiver no env NB_HCPA_Workflow, ele se relança sozinho no env certo TEORICAMENTE (desde que conda exista).
+
 # ---------------------------
 #IMPORTAÇÃO DE PACOTES PARA O AMBIENTE
 # ---------------------------
@@ -56,7 +64,43 @@ from pathlib import Path
 import signal
 from queue import Queue, Empty
 
-PAIR_REGEX = re.compile(r"(.+?)[._-]R?([12])(?:_001)?\.(?:fastq|fq)\.gz$", re.IGNORECASE)
+PAIR_REGEX = re.compile(r"(.+?)[._-]R?([12])(?:_001)?\.(?:fastq|fq)(?:\.gz)?$",re.IGNORECASE)
+
+
+# Identifica FASTQs pareados (R1/R2), com ou sem compressão .gz
+# Padrão: <prefixo>[._-]R?<1|2>[_001]?.<fastq|fq>[.gz]$
+#
+# Quebra da regex:
+# (.+?)           -> GRUPO 1: prefixo da amostra (captura mínima até o separador)
+# [._-]           -> separador permitido: ponto (.), underline (_) ou hífen (-)
+# R?              -> 'R' opcional (aceita "R1"/"R2" ou só "1"/"2")
+# ([12])          -> GRUPO 2: número da leitura (1 ou 2)
+# (?:_001)?       -> sufixo opcional comum do bcl2fastq/DRAGEN
+# \.              -> ponto literal antes da extensão
+# (?:fastq|fq)    -> extensão base aceita
+# (?:\.gz)?       -> compressão .gz opcional
+# $               -> âncora de fim (garante que termina aqui)
+# Flag: re.IGNORECASE -> case-insensitive (FASTQ, Fastq, etc.)
+#
+# Exemplos que CASAM:
+#   SampleA_R1_001.fastq.gz  -> grp1='SampleA', grp2='1'
+#   proj.subset-R2.fastq     -> grp1='proj.subset', grp2='2'
+#   abc-1.fq.gz              -> grp1='abc', grp2='1'
+#
+# Exemplos que NÃO casam:
+#   sample_R3.fastq.gz       -> apenas 1 ou 2 são válidos
+#   sample_R1.fastq.bz2      -> só .gz (ou nada) é aceito
+#   sample R1.fastq          -> separador deve ser ., _ ou -
+#
+# Uso:
+# m = PAIR_REGEX.search(path)
+# if m:
+#     sample, read = m.group(1), m.group(2)
+
+
+
+
+
 
 # Define absolute output directory
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,19 +115,35 @@ def _abs(p):
 # ---------------------------
 class App(tk.Tk):
     def __init__(self):
-        super().__init__()
+        super().__init__()       
+        
+        
         self.title("NB_HCPA Workflow")
+
+        
         try:
             self.attributes('-zoomed', True)
         except Exception:
             self.state('zoomed')
 
-        # Ajuste aqui se o nome do ambiente mudar
+        # Ajuste aqui se o nome do ambiente mudar #
         self.env_name = "NB_HCPA_Workflow"
 
         # Fila para logs thread-safe
         self._log_queue = Queue()
         self.after(100, self._flush_logs)
+
+# Controle de subprocesso: self.current_proc / self.stop_requested / self.batch_proc
+#    - self.current_proc guarda o objeto subprocess.Popen do fastp em execução.
+#    - self.stop_requested é uma flag booleana: quando True, a thread de leitura
+#      de stdout tenta encerrar o processo (SIGTERM no grupo, ou terminate()).
+#    - Em Unix, preexec_fn=os.setsid cria um *grupo de processos*; isso permite
+#      matar todo o grupo (fastp + filhos) com os.killpg(..., SIGTERM).
+#    - O laço de leitura usa readline() em stdout para *streaming* de linhas:
+#      cada linha é enviada para a fila de logs (Queue) e então exibida pela GUI.
+#    - Ao terminar, wait() é chamado, e self.current_proc volta a None.
+#    - self.batch_proc está reservado para fluxos em lote (não utilizado aqui)
+
 
         # Controle de processos
         self.current_proc = None
@@ -93,6 +153,7 @@ class App(tk.Tk):
         # Notebook
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill='both', expand=True)
+
 
         # Abas
         self.create_filtering_tab()   # fastp (única aba de processamento)

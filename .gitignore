@@ -12,6 +12,9 @@ __pycache__/
 
 # Saídas e dados grandes
 fastp_output/
+quast_reports/
+assembly_output/
+assemblies/
 results/
 logs/
 *.fastq.gz
